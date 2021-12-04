@@ -1,0 +1,62 @@
+import org.apache.spark.sql.{SparkSession, functions}
+import org.apache.spark.sql.functions.{avg, col, decode, expr, from_json, not, to_timestamp, window}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.types._
+import org.apache.log4j.Logger
+import org.apache.spark.sql.streaming.Trigger
+
+object windowaggregate {
+  @transient lazy val logger: Logger = Logger.getLogger(getClass.getName)
+
+  def main(args: Array[String]): Unit = {
+
+    val spark = SparkSession.builder()
+      .master("local[*]")
+      .appName("Structured Streaming Window")
+      .config("spark.streaming.stopGracefullyOnShutdown", "true")
+      .getOrCreate()
+
+    val kafkaDF = spark
+      .readStream
+      .format("kafka")
+      .option("kafka.bootstrap.servers", "localhost:9092")
+      .option("subscribe", "agg_topic")
+      .option("startingOffsets", "earliest")
+      .load()
+
+    kafkaDF.printSchema()
+
+    val valueDF = kafkaDF.select(col("value").cast("string"), col("timestamp").cast("string"))
+    // valueDF.printSchema()
+
+    val timestampDF = valueDF.select("value.*")
+      .withColumn("Data", col("value").cast("IntegerType"))
+      .withColumn("Time", to_timestamp(col("timestamp")))
+
+    val aggDF = timestampDF
+      .groupBy(
+        window(col("Time"), "10 minutes"))
+      .agg(max("Data").alias("MaxValue"),
+        min("Data").alias("MinValue"),
+        avg("Data").alias("AvgValue"))
+
+    val resultDF = aggDF.select("StartTime", "EndTime", "MaxValue", "MinValue", "AvgValue")
+
+    val outputQuery = resultDF.writeStream
+      .format("console")
+      .outputMode("update")
+      .option("checkpointLocation", "chk-point-dir")
+      //.trigger(Trigger.ProcessingTime("10 seconds"))
+      .start()
+
+    spark.streams.awaitAnyTermination()
+
+  }
+
+
+
+
+
+
+
+}
